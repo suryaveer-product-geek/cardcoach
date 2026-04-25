@@ -1,5 +1,5 @@
 // api/chat.js — Vercel Serverless Function
-// Uses Google Gemini API (gemini-2.0-flash) — non-streaming for reliability
+// Uses Google Gemini API
 // Set GEMINI_API_KEY in Vercel Environment Variables
 
 export default async function handler(req, res) {
@@ -32,30 +32,46 @@ export default async function handler(req, res) {
       },
     };
 
-    // Use non-streaming endpoint for reliability
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }
-    );
+    // Try models in order until one works
+    const models = [
+      "gemini-2.0-flash-lite",
+      "gemini-1.5-flash-latest",
+      "gemini-pro",
+    ];
 
-    if (!response.ok) {
-      const err = await response.text();
-      console.error("Gemini error:", err);
-      return res.status(500).json({ error: "Gemini API error", details: err });
+    let responseData = null;
+    let lastError = null;
+
+    for (const model of models) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (response.ok) {
+        responseData = await response.json();
+        break;
+      } else {
+        lastError = await response.text();
+        console.error(`Model ${model} failed:`, lastError);
+      }
     }
 
-    const data = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    if (!responseData) {
+      return res.status(500).json({ error: "All models failed", details: lastError });
+    }
+
+    const text = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     if (!text) {
-      return res.status(500).json({ error: "Empty response from Gemini", raw: data });
+      return res.status(500).json({ error: "Empty response", raw: responseData });
     }
 
-    // Send as a single SSE chunk in Anthropic format so frontend works unchanged
+    // Send in Anthropic SSE format so frontend works unchanged
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
