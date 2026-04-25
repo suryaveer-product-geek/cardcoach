@@ -34,9 +34,9 @@ export default async function handler(req, res) {
 
     // Try models in order until one works
     const models = [
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-flash-latest",
-      "gemini-pro",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-preview-04-17",
+      "gemini-2.0-flash-exp",
     ];
 
     let responseData = null;
