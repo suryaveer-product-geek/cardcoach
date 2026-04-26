@@ -288,7 +288,7 @@ function PhysicalCard({ card, selected, anySelected, onClick }) {
   );
 }
 
-function Message({ role, content, isStreaming, savingEntry, onConfirm, amountValue, onAmountChange }) {
+function Message({ role, content, isStreaming, savingEntry, onConfirm, amountValue, onAmountChange, msg = {} }) {
   return (
     <div style={{
       padding: "20px 0",
@@ -308,9 +308,13 @@ function Message({ role, content, isStreaming, savingEntry, onConfirm, amountVal
       <div style={{
         fontSize: role === "assistant" ? "15px" : "14px",
         lineHeight: "1.75",
-        color: role === "user" ? "var(--amex-text-secondary)" : "var(--amex-text-primary)",
+        color: msg.isError ? "#DC2626" : role === "user" ? "var(--amex-text-secondary)" : "var(--amex-text-primary)",
         fontWeight: 400,
         whiteSpace: "pre-wrap",
+        background: msg.isError ? "#FEF2F2" : "transparent",
+        padding: msg.isError ? "12px 14px" : "0",
+        borderRadius: msg.isError ? "8px" : "0",
+        border: msg.isError ? "1px solid #FECACA" : "none",
       }}>
         {content}
         {isStreaming && (
@@ -768,7 +772,7 @@ export default function CardCoachLuxury() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
-  const [apiKey, setApiKey] = useState(""); // unused — key lives on server
+  const [apiKey, setApiKey] = useState("");
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState("cards");
@@ -807,7 +811,6 @@ export default function CardCoachLuxury() {
   const sendMessage = async (overrideInput) => {
     const text = overrideInput || input;
     if (!text.trim() || loading) return;
-    if (!apiKey) { setShowKeyInput(true); return; }
     if (selectedCards.length === 0) {
       setMessages((prev) => [...prev, {
         role: "assistant",
@@ -829,21 +832,16 @@ export default function CardCoachLuxury() {
     const apiMessages = newMessages.map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: contextualSystem,
-          messages: apiMessages,
-          stream: true,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system: contextualSystem, messages: apiMessages }),
       });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error ${response.status}`);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -867,10 +865,12 @@ export default function CardCoachLuxury() {
         }
       }
 
+      if (!fullText.trim()) throw new Error("empty_response");
+
       const finalMsg = { role: "assistant", content: fullText, id: Date.now() };
       setMessages((prev) => [...prev, finalMsg]);
 
-      // Log query to localStorage
+      // Log to localStorage
       const log = storage.get(STORAGE_KEYS.QUERY_LOG) || [];
       log.push({
         id: finalMsg.id,
@@ -882,7 +882,6 @@ export default function CardCoachLuxury() {
       });
       storage.set(STORAGE_KEYS.QUERY_LOG, log);
 
-      // Create pending savings slot
       setSavings((prev) => [...prev, {
         id: finalMsg.id,
         query: text.slice(0, 60),
@@ -891,10 +890,26 @@ export default function CardCoachLuxury() {
         confirmed: false,
       }]);
       setStreamingText("");
+
     } catch (err) {
+      setStreamingText("");
+
+      let userMessage = "";
+      if (err.message === "empty_response") {
+        userMessage = "The AI returned an empty response. The model may be overloaded — please wait 30 seconds and try again.";
+      } else if (err.message?.includes("503") || err.message?.includes("UNAVAILABLE")) {
+        userMessage = "Google's AI is experiencing high demand right now. Please try again in a moment.";
+      } else if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
+        userMessage = "No internet connection detected. Please check your network and try again.";
+      } else {
+        userMessage = `Something went wrong. Please try again. (${err.message || "Unknown error"})`;
+      }
+
       setMessages((prev) => [...prev, {
         role: "assistant",
-        content: "I'm unable to connect at the moment. Please verify your API key and try again.",
+        content: `⚠️ ${userMessage}`,
+        isError: true,
+        id: Date.now(),
       }]);
     } finally {
       setLoading(false);
@@ -1331,6 +1346,7 @@ export default function CardCoachLuxury() {
                       key={i}
                       role={msg.role}
                       content={msg.content}
+                      msg={msg}
                       savingEntry={savingEntry}
                       onConfirm={() => confirmSaving(msg.id)}
                       amountValue={amountInputs[msg.id] || ""}
