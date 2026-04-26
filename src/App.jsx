@@ -710,22 +710,80 @@ function getLast3Months() {
   });
 }
 
+// ─── STORAGE LAYER ────────────────────────────────────────────────────────────
+// System 1: localStorage persistence
+// Keys are prefixed with "cc_" to avoid collisions
+
+const STORAGE_KEYS = {
+  USER_NAME:     "cc_user_name",
+  SELECTED_CARDS:"cc_selected_cards",
+  QUERY_LOG:     "cc_query_log",
+  SAVINGS:       "cc_savings",
+  CREDIT_LOG:    "cc_credit_log",
+  STREAK:        "cc_streak",
+};
+
+const storage = {
+  get: (key) => {
+    try {
+      const val = localStorage.getItem(key);
+      return val ? JSON.parse(val) : null;
+    } catch { return null; }
+  },
+  set: (key, value) => {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  },
+};
+
+// Update streak — call on every app load
+function updateStreak() {
+  const today = new Date().toISOString().split("T")[0];
+  const streak = storage.get(STORAGE_KEYS.STREAK) || { last_visit: null, current_streak: 0 };
+  if (streak.last_visit === today) return streak;
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+  const newStreak = {
+    last_visit: today,
+    current_streak: streak.last_visit === yesterday ? streak.current_streak + 1 : 1,
+  };
+  storage.set(STORAGE_KEYS.STREAK, newStreak);
+  return newStreak;
+}
+
+// Greeting based on time of day
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 export default function CardCoachLuxury() {
-  const [selectedCards, setSelectedCards] = useState([]);
+  // Hydrate all state from localStorage on first load
+  const [userName, setUserName] = useState(() => storage.get(STORAGE_KEYS.USER_NAME) || "");
+  const [showNamePrompt, setShowNamePrompt] = useState(() => !storage.get(STORAGE_KEYS.USER_NAME));
+  const [nameInput, setNameInput] = useState("");
+  const [selectedCards, setSelectedCards] = useState(() => storage.get(STORAGE_KEYS.SELECTED_CARDS) || []);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [apiKey, setApiKey] = useState(""); // unused — key lives on server
-  const [showKeyInput, setShowKeyInput] = useState(false); // unused — kept for compat
+  const [showKeyInput, setShowKeyInput] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState("cards");
-  const [savings, setSavings] = useState([]); // { id, query, estimatedSaving, date, confirmed, amountInput }
-  const [pendingSaving, setPendingSaving] = useState(null); // message index awaiting confirmation
-  const [amountInputs, setAmountInputs] = useState({}); // messageIndex -> string
-  const [creditLog, setCreditLog] = useState({}); // "cardId-creditLabel-monthIndex-year" -> boolean
+  const [savings, setSavings] = useState(() => storage.get(STORAGE_KEYS.SAVINGS) || []);
+  const [pendingSaving, setPendingSaving] = useState(null);
+  const [amountInputs, setAmountInputs] = useState({});
+  const [creditLog, setCreditLog] = useState(() => storage.get(STORAGE_KEYS.CREDIT_LOG) || {});
+  const [streak, setStreak] = useState(() => updateStreak());
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Persist to localStorage on every change
+  useEffect(() => { storage.set(STORAGE_KEYS.SELECTED_CARDS, selectedCards); }, [selectedCards]);
+  useEffect(() => { storage.set(STORAGE_KEYS.SAVINGS, savings); }, [savings]);
+  useEffect(() => { storage.set(STORAGE_KEYS.CREDIT_LOG, creditLog); }, [creditLog]);
 
   const totalSavedThisMonth = savings
     .filter((s) => s.confirmed && new Date(s.date).getMonth() === new Date().getMonth())
@@ -749,6 +807,7 @@ export default function CardCoachLuxury() {
   const sendMessage = async (overrideInput) => {
     const text = overrideInput || input;
     if (!text.trim() || loading) return;
+    if (!apiKey) { setShowKeyInput(true); return; }
     if (selectedCards.length === 0) {
       setMessages((prev) => [...prev, {
         role: "assistant",
@@ -770,13 +829,19 @@ export default function CardCoachLuxury() {
     const apiMessages = newMessages.map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      // Call our Vercel serverless function — API key never touches the browser
-      const response = await fetch("/api/chat", {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
         body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
           system: contextualSystem,
           messages: apiMessages,
+          stream: true,
         }),
       });
 
@@ -804,7 +869,20 @@ export default function CardCoachLuxury() {
 
       const finalMsg = { role: "assistant", content: fullText, id: Date.now() };
       setMessages((prev) => [...prev, finalMsg]);
-      // Create a pending savings slot for this response
+
+      // Log query to localStorage
+      const log = storage.get(STORAGE_KEYS.QUERY_LOG) || [];
+      log.push({
+        id: finalMsg.id,
+        query: text.slice(0, 120),
+        response: fullText.slice(0, 300),
+        timestamp: new Date().toISOString(),
+        confirmed: false,
+        amount_saved: 0,
+      });
+      storage.set(STORAGE_KEYS.QUERY_LOG, log);
+
+      // Create pending savings slot
       setSavings((prev) => [...prev, {
         id: finalMsg.id,
         query: text.slice(0, 60),
@@ -823,11 +901,31 @@ export default function CardCoachLuxury() {
     }
   };
 
+  const saveName = (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setUserName(trimmed);
+    storage.set(STORAGE_KEYS.USER_NAME, trimmed);
+    setShowNamePrompt(false);
+  };
+
   const confirmSaving = (msgId) => {
     const amount = amountInputs[msgId] || "0";
-    setSavings((prev) => prev.map((s) =>
-      s.id === msgId ? { ...s, confirmed: true, amount } : s
-    ));
+    setSavings((prev) => {
+      const updated = prev.map((s) =>
+        s.id === msgId ? { ...s, confirmed: true, amount } : s
+      );
+      // Also persist query log entry
+      const entry = updated.find((s) => s.id === msgId);
+      const log = storage.get(STORAGE_KEYS.QUERY_LOG) || [];
+      const existing = log.find((l) => l.id === msgId);
+      if (existing) {
+        existing.confirmed = true;
+        existing.amount_saved = parseFloat(amount) || 0;
+        storage.set(STORAGE_KEYS.QUERY_LOG, log);
+      }
+      return updated;
+    });
   };
 
   const toggleCredit = (key) => {
@@ -844,27 +942,20 @@ export default function CardCoachLuxury() {
         @import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { height: 100%; background: #FFFFFF; }
-
         :root {
-          --amex-blue: #016FD0;
-          --amex-navy: #002663;
-          --amex-gray: #4D4F53;
-          --amex-light-gray: #F7F8FA;
-          --amex-border: #E2E4E8;
-          --amex-text-primary: #1A1A1A;
-          --amex-text-secondary: #4D4F53;
-          --amex-text-muted: #8A8C8F;
-          --amex-white: #FFFFFF;
+          --amex-blue: #016FD0; --amex-navy: #002663; --amex-gray: #4D4F53;
+          --amex-light-gray: #F7F8FA; --amex-border: #E2E4E8;
+          --amex-text-primary: #1A1A1A; --amex-text-secondary: #4D4F53;
+          --amex-text-muted: #8A8C8F; --amex-white: #FFFFFF;
           --font: 'Work Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         }
-
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
         @keyframes slideIn { from{opacity:0;transform:translateX(-12px)} to{opacity:1;transform:translateX(0)} }
         @keyframes popIn { 0%{opacity:0;transform:scale(0.95)} 100%{opacity:1;transform:scale(1)} }
         @keyframes countUp { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-
+        @keyframes modalIn { from{opacity:0;transform:translateY(-20px)} to{opacity:1;transform:translateY(0)} }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--amex-border); border-radius: 4px; }
@@ -872,6 +963,78 @@ export default function CardCoachLuxury() {
         button { outline: none; font-family: var(--font); }
         input { outline: none; font-family: var(--font); }
       `}</style>
+
+      {/* ── Name Prompt Modal — shown only on first visit ── */}
+      {showNamePrompt && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          background: "rgba(0,38,99,0.5)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(4px)",
+        }}>
+          <div style={{
+            background: "#FFFFFF",
+            borderRadius: "12px",
+            padding: "36px 32px",
+            width: "380px",
+            boxShadow: "0 24px 64px rgba(0,38,99,0.2)",
+            animation: "modalIn 0.3s ease",
+          }}>
+            <div style={{
+              display: "inline-block",
+              padding: "3px 10px",
+              background: "var(--amex-blue)",
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 700,
+              color: "#fff",
+              letterSpacing: "0.08em",
+              marginBottom: "16px",
+            }}>AMEX</div>
+            <div style={{
+              fontSize: "22px", fontWeight: 700,
+              color: "var(--amex-navy)", marginBottom: "8px",
+            }}>
+              Welcome to CardCoach
+            </div>
+            <div style={{
+              fontSize: "14px", color: "var(--amex-text-muted)",
+              marginBottom: "24px", lineHeight: 1.6,
+            }}>
+              Google Maps for your spending. What should we call you?
+            </div>
+            <input
+              autoFocus
+              type="text"
+              placeholder="Your first name"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveName(nameInput); }}
+              style={{
+                width: "100%", padding: "12px 14px",
+                border: "1px solid var(--amex-border)",
+                borderRadius: "8px", fontSize: "15px",
+                color: "var(--amex-text-primary)",
+                marginBottom: "12px", background: "var(--amex-light-gray)",
+              }}
+            />
+            <button
+              onClick={() => saveName(nameInput)}
+              style={{
+                width: "100%", padding: "12px",
+                background: "var(--amex-blue)", color: "#fff",
+                border: "none", borderRadius: "8px",
+                fontSize: "14px", fontWeight: 600,
+                cursor: "pointer", transition: "background 0.15s",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--amex-navy)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "var(--amex-blue)"}
+            >
+              Get Started
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={{
         height: "100vh",
@@ -986,7 +1149,70 @@ export default function CardCoachLuxury() {
             />
           )}
 
-          {/* API key is set via Vercel environment variables — nothing to show here */}
+          {/* API Key section */}
+          <div style={{
+            padding: "14px 20px",
+            borderTop: "1px solid var(--amex-border)",
+            background: "var(--amex-light-gray)",
+          }}>
+            <button
+              onClick={() => setShowKeyInput((s) => !s)}
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                background: "#FFFFFF",
+                border: `1px solid ${apiKey ? "#016FD0" : "var(--amex-border)"}`,
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontSize: "12px",
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                color: apiKey ? "var(--amex-blue)" : "var(--amex-text-muted)",
+                textAlign: "left",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                transition: "all 0.2s",
+              }}
+            >
+              <span>API KEY</span>
+              <span style={{
+                fontSize: "11px",
+                fontWeight: 500,
+                color: apiKey ? "#22C55E" : "var(--amex-text-muted)",
+              }}>
+                {apiKey ? "● Connected" : "○ Not set"}
+              </span>
+            </button>
+            {showKeyInput && (
+              <div style={{ marginTop: "8px", animation: "fadeUp 0.2s ease" }}>
+                <input
+                  type="password"
+                  placeholder="sk-ant-..."
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") setShowKeyInput(false); }}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    background: "#FFFFFF",
+                    border: "1px solid var(--amex-border)",
+                    borderRadius: "6px",
+                    fontSize: "13px",
+                    color: "var(--amex-text-primary)",
+                  }}
+                />
+                <div style={{
+                  fontSize: "11px",
+                  color: "var(--amex-text-muted)",
+                  marginTop: "5px",
+                  lineHeight: 1.5,
+                }}>
+                  Stored in session only.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* MAIN CONTENT */}
@@ -1033,32 +1259,28 @@ export default function CardCoachLuxury() {
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={{
-                    fontSize: "18px",
-                    fontWeight: 700,
-                    color: "var(--amex-navy)",
-                    letterSpacing: "-0.01em",
+                    fontSize: "18px", fontWeight: 700,
+                    color: "var(--amex-navy)", letterSpacing: "-0.01em",
                   }}>
-                    CardCoach
+                    {userName ? `${getGreeting()}, ${userName}` : "CardCoach"}
                   </span>
                   <span style={{
-                    padding: "2px 8px",
-                    background: "var(--amex-blue)",
-                    borderRadius: "4px",
-                    fontSize: "10px",
-                    fontWeight: 600,
-                    color: "#FFFFFF",
-                    letterSpacing: "0.06em",
-                  }}>
-                    AMEX
-                  </span>
+                    padding: "2px 8px", background: "var(--amex-blue)",
+                    borderRadius: "4px", fontSize: "10px", fontWeight: 600,
+                    color: "#FFFFFF", letterSpacing: "0.06em",
+                  }}>AMEX</span>
                 </div>
                 <div style={{
-                  fontSize: "12px",
-                  color: "var(--amex-text-muted)",
-                  fontWeight: 400,
-                  marginTop: "1px",
+                  fontSize: "12px", color: "var(--amex-text-muted)",
+                  fontWeight: 400, marginTop: "1px",
+                  display: "flex", alignItems: "center", gap: "8px",
                 }}>
-                  Google Maps for your spending
+                  <span>Google Maps for your spending</span>
+                  {streak.current_streak > 1 && (
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--amex-blue)" }}>
+                      🔥 {streak.current_streak} day streak
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
