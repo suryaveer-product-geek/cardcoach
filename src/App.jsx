@@ -470,6 +470,93 @@ function SavingsBanner({ totalSaved, confirmedCount }) {
   );
 }
 
+// ── Expiring Credits Banner ────────────────────────────────────────────────────
+// Shows when a monthly credit is unused and expiring within 7 days
+// Dismissed per-credit per-month — stored in localStorage
+
+function getExpiringCredits(selectedCards, creditLog) {
+  const now = new Date();
+  const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
+  if (daysLeft > 7) return []; // Only trigger in last 7 days of month
+
+  const expiring = [];
+  selectedCards.forEach((cardId) => {
+    const credits = MONTHLY_CREDITS[cardId] || [];
+    const card = AMEX_CARDS.find((c) => c.id === cardId);
+    credits.forEach((credit) => {
+      // Skip annual/semi-annual credits
+      if (credit.cadence === "annual" || credit.cadence === "semi-annual") return;
+      const key = `${cardId}-${credit.label}-${now.getMonth()}-${now.getFullYear()}`;
+      if (!creditLog[key]) {
+        expiring.push({
+          key,
+          cardName: card?.name || cardId,
+          label: credit.label,
+          amount: credit.amount,
+          daysLeft,
+        });
+      }
+    });
+  });
+  return expiring;
+}
+
+function ExpiringCreditsBanner({ selectedCards, creditLog, onDismiss, dismissed }) {
+  const expiring = getExpiringCredits(selectedCards, creditLog)
+    .filter((c) => !dismissed.includes(c.key));
+
+  if (expiring.length === 0) return null;
+
+  return (
+    <div style={{ flexShrink: 0 }}>
+      {expiring.map((credit) => (
+        <div key={credit.key} style={{
+          background: "#FEF3C7",
+          borderBottom: "1px solid #FCD34D",
+          padding: "10px 28px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          animation: "slideIn 0.3s ease",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "14px" }}>⏰</span>
+            <div>
+              <span style={{
+                fontSize: "13px", fontWeight: 600, color: "#92400E",
+              }}>
+                ${credit.amount} {credit.label} credit
+              </span>
+              <span style={{ fontSize: "13px", color: "#92400E", fontWeight: 400 }}>
+                {" "}· {credit.cardName} · expires in{" "}
+                <strong>{credit.daysLeft} day{credit.daysLeft !== 1 ? "s" : ""}</strong>
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              onClick={() => onDismiss(credit.key)}
+              style={{
+                padding: "5px 12px",
+                background: "#FFFFFF",
+                border: "1px solid #FCD34D",
+                borderRadius: "5px",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "#92400E",
+                cursor: "pointer",
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 function BenefitCalendar({ selectedCards, creditLog, toggleCredit }) {
   const months = getLast3Months();
 
@@ -603,6 +690,306 @@ function BenefitCalendar({ selectedCards, creditLog, toggleCredit }) {
       }}>
         Tap a cell to mark a credit as used. Resets are not tracked automatically — update manually each month.
       </div>
+    </div>
+  );
+}
+
+function CaseForAmex() {
+  const sections = [
+    {
+      tag: "THE PROBLEM",
+      tagColor: "#DC2626",
+      heading: "Your members aren't feeling the value they're paying for",
+      body: `Every year, billions of dollars in Amex benefits go unused. Not because members don't care — they do. They paid $695 for the Platinum card. They want to feel that. The problem is that benefits live in PDFs, in emails nobody opens, in an app tab nobody checks. By the time they're standing at a checkout or booking a flight, the information simply isn't there. So they swipe whatever card is on top of their wallet. Usually not Amex.`,
+    },
+    {
+      tag: "THE INSIGHT",
+      tagColor: "#B8960C",
+      heading: "This is a timing problem, not a knowledge problem",
+      body: `Members roughly know their benefits exist. What they don't have is benefit recall at the moment of purchase — the one moment it actually changes behavior. Showing someone their lounge access inside an app they open once a month doesn't change what card they swipe tonight at dinner. Telling them "use your Gold card right now, you get 4x and a $10 credit" does.`,
+    },
+    {
+      tag: "THE INTERVENTION",
+      tagColor: "#016FD0",
+      heading: "CardCoach sits at exactly that moment",
+      body: `Before a purchase, the user describes what they're buying. CardCoach responds in under 10 seconds with the right card, the exact benefit that applies, and what they'd leave on the table by using a different card. It's not a dashboard. It's not a notification. It's a decision layer that lives between intent and payment — the only place where benefit awareness actually drives behavior change.`,
+    },
+    {
+      tag: "V1 CONSTRAINTS — HONEST",
+      tagColor: "#4D4F53",
+      heading: "What this version can and cannot do",
+      body: `V1 works with publicly documented benefit data and user self-reporting. There is no bank connection, no transaction data, no real-time point balances. Savings are what users tell us they saved — not verified. The north star metric (% of purchase decisions optimized) is currently unmeasurable without transaction data. This is not a limitation we're hiding — it's the honest state of a V1 built in two weeks by one person.`,
+    },
+    {
+      tag: "THE V2 UNLOCK",
+      tagColor: "#166534",
+      heading: "What changes when Amex brings their data",
+      body: `With access to transaction data — either through Amex's own API or a data partnership — every metric becomes real. Point balances are live. Credit usage is tracked automatically. The system knows if a member used their dining credit this month without them having to tell it. Recommendations become personalized to actual spend patterns. The north star metric becomes measurable. And the product becomes something Amex could white-label and embed in their own app.`,
+    },
+    {
+      tag: "THE METRIC THAT MATTERS TO AMEX",
+      tagColor: "#7C3AED",
+      heading: "Annual fee renewal rate",
+      body: `Amex doesn't make money when you earn points. They make money when you renew your card next year. Renewal happens when members feel the fee was worth it. They feel it's worth it when they've actually used their benefits. CardCoach closes that loop — turning passive benefit ownership into active benefit usage. Every interaction where a member saves money because of CardCoach is a data point that justifies their renewal. That's the metric this product moves.`,
+    },
+  ];
+
+  return (
+    <div style={{
+      flex: 1, overflowY: "auto",
+      padding: "20px 20px 40px",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "14px 16px",
+        background: "#EFF6FF",
+        border: "1px solid #BFDBFE",
+        borderRadius: "8px",
+        marginBottom: "24px",
+      }}>
+        <div style={{
+          fontSize: "11px", fontWeight: 700,
+          color: "var(--amex-blue)", letterSpacing: "0.08em",
+          textTransform: "uppercase", marginBottom: "4px",
+        }}>
+          A PM's note
+        </div>
+        <div style={{
+          fontSize: "12px", color: "var(--amex-navy)",
+          lineHeight: 1.6, fontWeight: 400,
+        }}>
+          This tab exists because building the product is only half the job.
+          The other half is understanding whose problem you're solving and why they should care.
+        </div>
+      </div>
+
+      {/* Sections */}
+      {sections.map((section, i) => (
+        <div key={i} style={{
+          marginBottom: "24px",
+          paddingBottom: "24px",
+          borderBottom: i < sections.length - 1 ? "1px solid var(--amex-border)" : "none",
+          animation: `fadeUp 0.4s ease ${i * 0.06}s both`,
+        }}>
+          <div style={{
+            display: "inline-block",
+            padding: "2px 8px",
+            borderRadius: "4px",
+            background: `${section.tagColor}14`,
+            border: `1px solid ${section.tagColor}33`,
+            fontSize: "9px",
+            fontWeight: 700,
+            color: section.tagColor,
+            letterSpacing: "0.12em",
+            marginBottom: "8px",
+          }}>
+            {section.tag}
+          </div>
+          <div style={{
+            fontSize: "14px",
+            fontWeight: 700,
+            color: "var(--amex-navy)",
+            lineHeight: 1.4,
+            marginBottom: "8px",
+          }}>
+            {section.heading}
+          </div>
+          <div style={{
+            fontSize: "12px",
+            color: "var(--amex-text-secondary)",
+            lineHeight: 1.8,
+            fontWeight: 400,
+          }}>
+            {section.body}
+          </div>
+        </div>
+      ))}
+
+      {/* The ask */}
+      <div style={{
+        padding: "16px",
+        background: "var(--amex-navy)",
+        borderRadius: "8px",
+        marginTop: "8px",
+      }}>
+        <div style={{
+          fontSize: "10px", fontWeight: 700,
+          color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em",
+          textTransform: "uppercase", marginBottom: "6px",
+        }}>
+          The ask
+        </div>
+        <div style={{
+          fontSize: "13px", color: "#FFFFFF",
+          lineHeight: 1.7, fontWeight: 400,
+        }}>
+          This is what I'd build inside Amex with real transaction data, a design team,
+          and access to Membership Rewards infrastructure.
+          The V1 you're looking at took two weeks. Imagine what's possible in a quarter.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OptimizationPanel({
+  totalQueriesThisMonth, confirmedThisMonth, unconfirmedThisMonth,
+  totalSavedThisMonth, optimizationScore, unusedCredits,
+  collapsed, onToggle,
+}) {
+  if (totalQueriesThisMonth === 0 && unusedCredits.length === 0) return null;
+
+  const missedEstimate = unconfirmedThisMonth.length * 22; // rough avg per unconfirmed query
+
+  return (
+    <div style={{
+      margin: "20px 0 8px",
+      border: "1px solid var(--amex-border)",
+      borderRadius: "10px",
+      overflow: "hidden",
+      animation: "fadeUp 0.4s ease",
+    }}>
+      {/* Panel header — always visible */}
+      <button
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          padding: "12px 16px",
+          background: "var(--amex-light-gray)",
+          border: "none",
+          borderBottom: collapsed ? "none" : "1px solid var(--amex-border)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          cursor: "pointer",
+          fontFamily: "var(--font)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{
+            fontSize: "11px", fontWeight: 700,
+            color: "var(--amex-navy)", letterSpacing: "0.06em",
+            textTransform: "uppercase",
+          }}>
+            This month
+          </span>
+          {totalQueriesThisMonth > 0 && (
+            <span style={{
+              padding: "2px 8px",
+              borderRadius: "20px",
+              fontSize: "11px", fontWeight: 700,
+              background: optimizationScore >= 70 ? "#F0FBF4" : optimizationScore >= 40 ? "#FEF9EC" : "#FEF2F2",
+              color: optimizationScore >= 70 ? "#166534" : optimizationScore >= 40 ? "#92400E" : "#DC2626",
+              border: `1px solid ${optimizationScore >= 70 ? "#86EFAC" : optimizationScore >= 40 ? "#FCD34D" : "#FECACA"}`,
+            }}>
+              {optimizationScore}% optimized
+            </span>
+          )}
+        </div>
+        <span style={{ fontSize: "12px", color: "var(--amex-text-muted)" }}>
+          {collapsed ? "▼ Show" : "▲ Hide"}
+        </span>
+      </button>
+
+      {/* Panel body */}
+      {!collapsed && (
+        <div style={{ padding: "16px" }}>
+
+          {/* Metrics row */}
+          {totalQueriesThisMonth > 0 && (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "10px",
+              marginBottom: "16px",
+            }}>
+              {[
+                { label: "Checked", value: totalQueriesThisMonth, sub: "purchases this month", color: "var(--amex-blue)" },
+                { label: "Optimized", value: confirmedThisMonth.length, sub: "recommendations used", color: "#166534" },
+                { label: "Self-reported saved", value: `$${totalSavedThisMonth.toFixed(0)}`, sub: "logged by you", color: "#B8960C" },
+              ].map((m) => (
+                <div key={m.label} style={{
+                  padding: "12px",
+                  background: "#FFFFFF",
+                  border: "1px solid var(--amex-border)",
+                  borderRadius: "8px",
+                  textAlign: "center",
+                }}>
+                  <div style={{ fontSize: "10px", fontWeight: 600, color: "var(--amex-text-muted)", letterSpacing: "0.06em", marginBottom: "4px", textTransform: "uppercase" }}>
+                    {m.label}
+                  </div>
+                  <div style={{ fontSize: "22px", fontWeight: 700, color: m.color, letterSpacing: "-0.02em" }}>
+                    {m.value}
+                  </div>
+                  <div style={{ fontSize: "10px", color: "var(--amex-text-muted)", marginTop: "2px" }}>
+                    {m.sub}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* What you missed */}
+          {unconfirmedThisMonth.length > 0 && (
+            <div style={{
+              padding: "12px 14px",
+              background: "#FEF2F2",
+              border: "1px solid #FECACA",
+              borderRadius: "8px",
+              marginBottom: "12px",
+            }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#DC2626", marginBottom: "4px" }}>
+                {unconfirmedThisMonth.length} recommendation{unconfirmedThisMonth.length > 1 ? "s" : ""} not confirmed
+              </div>
+              <div style={{ fontSize: "12px", color: "#B91C1C", lineHeight: 1.6 }}>
+                You may have left approximately <strong>${missedEstimate}</strong> uncaptured this month.
+                This is an estimate — only purchases you confirm are tracked accurately.
+              </div>
+            </div>
+          )}
+
+          {/* Unused credits */}
+          {unusedCredits.length > 0 && (
+            <div>
+              <div style={{
+                fontSize: "10px", fontWeight: 700,
+                color: "var(--amex-text-muted)", letterSpacing: "0.06em",
+                textTransform: "uppercase", marginBottom: "8px",
+              }}>
+                Unused credits this month
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {unusedCredits.map((credit, i) => (
+                  <div key={i} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "8px 12px",
+                    background: "#FEF9EC",
+                    border: "1px solid #FCD34D",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                  }}>
+                    <span style={{ color: "var(--amex-navy)", fontWeight: 500 }}>
+                      {credit.cardName} · {credit.label}
+                    </span>
+                    <span style={{ fontWeight: 700, color: "#92400E" }}>
+                      ${credit.amount}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{
+                fontSize: "11px", color: "var(--amex-text-muted)",
+                marginTop: "8px", fontStyle: "italic",
+              }}>
+                Mark credits as used in the Credits tab once you've used them.
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
     </div>
   );
 }
@@ -780,7 +1167,8 @@ export default function CardCoachLuxury() {
   const [pendingSaving, setPendingSaving] = useState(null);
   const [amountInputs, setAmountInputs] = useState({});
   const [creditLog, setCreditLog] = useState(() => storage.get(STORAGE_KEYS.CREDIT_LOG) || {});
-  const [streak, setStreak] = useState(() => updateStreak());
+  const [dismissedBanners, setDismissedBanners] = useState(() => storage.get("cc_dismissed_banners") || []);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -789,11 +1177,36 @@ export default function CardCoachLuxury() {
   useEffect(() => { storage.set(STORAGE_KEYS.SAVINGS, savings); }, [savings]);
   useEffect(() => { storage.set(STORAGE_KEYS.CREDIT_LOG, creditLog); }, [creditLog]);
 
-  const totalSavedThisMonth = savings
-    .filter((s) => s.confirmed && new Date(s.date).getMonth() === new Date().getMonth())
-    .reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  // ── Optimization metrics — computed from real data only ──
+  const thisMonth = new Date().getMonth();
+  const thisYear  = new Date().getFullYear();
 
-  const confirmedCount = savings.filter((s) => s.confirmed).length;
+  const thisMonthSavings = savings.filter((s) => {
+    const d = new Date(s.date);
+    return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+  });
+
+  const totalQueriesThisMonth  = thisMonthSavings.length;
+  const confirmedThisMonth     = thisMonthSavings.filter((s) => s.confirmed);
+  const unconfirmedThisMonth   = thisMonthSavings.filter((s) => !s.confirmed);
+  const totalSavedThisMonth    = confirmedThisMonth.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const confirmedCount         = savings.filter((s) => s.confirmed).length;
+  const optimizationScore      = totalQueriesThisMonth > 0
+    ? Math.round((confirmedThisMonth.length / totalQueriesThisMonth) * 100)
+    : 0;
+
+  // Unused credits this month
+  const unusedCredits = selectedCards.flatMap((cardId) => {
+    const credits = MONTHLY_CREDITS[cardId] || [];
+    const card = AMEX_CARDS.find((c) => c.id === cardId);
+    return credits
+      .filter((credit) => {
+        if (credit.cadence === "annual" || credit.cadence === "semi-annual") return false;
+        const key = `${cardId}-${credit.label}-${thisMonth}-${thisYear}`;
+        return !creditLog[key];
+      })
+      .map((credit) => ({ ...credit, cardName: card?.name }));
+  });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -947,6 +1360,12 @@ export default function CardCoachLuxury() {
     setCreditLog((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const dismissBanner = (key) => {
+    const updated = [...dismissedBanners, key];
+    setDismissedBanners(updated);
+    storage.set("cc_dismissed_banners", updated);
+  };
+
   const handleKey = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
@@ -1093,7 +1512,7 @@ export default function CardCoachLuxury() {
               lineHeight: 1.2,
               marginBottom: "14px",
             }}>
-              {sidebarTab === "cards" ? "Select cards to activate" : "Benefit Calendar"}
+              {sidebarTab === "cards" ? "Select cards to activate" : sidebarTab === "benefits" ? "Benefit Calendar" : "The Case for Amex"}
             </div>
 
             {/* Tab switcher */}
@@ -1103,26 +1522,25 @@ export default function CardCoachLuxury() {
               gap: "0",
               marginBottom: "-1px",
             }}>
-              {["cards", "benefits"].map((tab) => (
+              {["cards", "benefits", "pitch"].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setSidebarTab(tab)}
                   style={{
-                    padding: "8px 16px",
+                    padding: "8px 12px",
                     background: "transparent",
                     border: "none",
                     borderBottom: sidebarTab === tab ? "2px solid var(--amex-blue)" : "2px solid transparent",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: sidebarTab === tab ? 600 : 400,
                     color: sidebarTab === tab ? "var(--amex-blue)" : "var(--amex-text-muted)",
                     cursor: "pointer",
                     transition: "all 0.15s",
                     fontFamily: "var(--font)",
-                    letterSpacing: "0.01em",
-                    paddingLeft: tab === "cards" ? "0" : "16px",
+                    paddingLeft: tab === "cards" ? "0" : "12px",
                   }}
                 >
-                  {tab === "cards" ? "Wallet" : "Credits"}
+                  {tab === "cards" ? "Wallet" : tab === "benefits" ? "Credits" : "Pitch"}
                 </button>
               ))}
             </div>
@@ -1156,12 +1574,14 @@ export default function CardCoachLuxury() {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : sidebarTab === "benefits" ? (
             <BenefitCalendar
               selectedCards={selectedCards}
               creditLog={creditLog}
               toggleCredit={toggleCredit}
             />
+          ) : (
+            <CaseForAmex />
           )}
 
           {/* API Key section */}
@@ -1291,9 +1711,12 @@ export default function CardCoachLuxury() {
                   display: "flex", alignItems: "center", gap: "8px",
                 }}>
                   <span>Google Maps for your spending</span>
-                  {streak.current_streak > 1 && (
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--amex-blue)" }}>
-                      🔥 {streak.current_streak} day streak
+                  {totalQueriesThisMonth >= 2 && (
+                    <span style={{
+                      fontSize: "11px", fontWeight: 600,
+                      color: optimizationScore >= 70 ? "#166534" : optimizationScore >= 40 ? "#B8960C" : "#DC2626",
+                    }}>
+                      {optimizationScore}% optimized this month
                     </span>
                   )}
                 </div>
@@ -1326,6 +1749,14 @@ export default function CardCoachLuxury() {
           {/* Savings Banner */}
           <SavingsBanner totalSaved={totalSavedThisMonth} confirmedCount={confirmedCount} />
 
+          {/* Expiring Credits Banner */}
+          <ExpiringCreditsBanner
+            selectedCards={selectedCards}
+            creditLog={creditLog}
+            dismissed={dismissedBanners}
+            onDismiss={dismissBanner}
+          />
+
           {/* Messages area */}
           <div style={{
             flex: 1,
@@ -1333,6 +1764,17 @@ export default function CardCoachLuxury() {
             padding: "0 28px",
             background: "#FFFFFF",
           }}>
+            {/* Optimization Panel — always shown when data exists */}
+            <OptimizationPanel
+              totalQueriesThisMonth={totalQueriesThisMonth}
+              confirmedThisMonth={confirmedThisMonth}
+              unconfirmedThisMonth={unconfirmedThisMonth}
+              totalSavedThisMonth={totalSavedThisMonth}
+              optimizationScore={optimizationScore}
+              unusedCredits={unusedCredits}
+              collapsed={panelCollapsed}
+              onToggle={() => setPanelCollapsed((p) => !p)}
+            />
             {messages.length === 0 && !streamingText ? (
               <EmptyState onSuggestion={(q) => { setInput(q); setTimeout(() => sendMessage(q), 50); }} />
             ) : (
